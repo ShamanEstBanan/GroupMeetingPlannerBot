@@ -1,2 +1,2 @@
-# GroupMeetingPlannerBot
-Telegram bot for planning meeting of group
+# Group eeting Planner Bot
+Telegram bot for planning meeting of friends
