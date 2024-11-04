@@ -5,26 +5,30 @@ import logging
 import sys
 import typing
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Mapping
+from dataclasses import asdict,dataclass
+from typing import Any, List, Mapping
 
 from aiogram import Bot, Dispatcher, html, types, Router, F
-from aiogram.types import (KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove, )
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.filters import CommandStart, Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-import pymongo
 from pymongo import MongoClient
 from pymongo.synchronous.cursor import Cursor
-
 import helpers.time_calculator
 from config import API_TOKEN
+from enum import Enum
+from config_data.config import MONGO_ADDRESS
 
+
+class EventStatus(Enum):
+    CREATED = 'CREATED'
+    SCHEDULED = "scheduled"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
 
 class Meeting(StatesGroup):
     new = State()
@@ -36,29 +40,36 @@ class Meeting(StatesGroup):
 class Event:
     chat_id: str
     title: str
-    start: str
-    end: str
+    week_start: str
+    week_end: str
     author_id: str
+    status: EventStatus
+    day:str
 
 
 events = []
 meetings_router = Router()
 
-client = MongoClient("mongodb://localhost:27017/")  # Adjust the URI if needed
+client = MongoClient(MONGO_ADDRESS)  # Adjust the URI if needed
 db = client["MeetingsBot"]  # Create (or access) the database
 events_collection = db["Events"]  # Create (or access) the collection
 
 
 def insert_event(e: Event) -> None:
-    event = {
-        'chat_id': e.chat_id,
-        'title': e.title,
-        'start': e.start,
-        'end': e.end,
-        'author_id': e.author_id,
-    }
+    event = Event(
+        chat_id=e.chat_id,
+        title=e.title,
+        week_start=e.week_start,
+        week_end=e.week_end,
+        author_id=e.author_id,
+        status=e.status,
+        day=e.day,
 
-    event_id = events_collection.insert_one(event).inserted_id
+    )
+
+    event_dict = asdict(event)
+    event_dict['status'] = event.status.value
+    event_id = events_collection.insert_one(event_dict).inserted_id
     logging.info(f'Inserted event {event_id}')
     return
 
@@ -87,22 +98,23 @@ def get_events_by_chat_id(chat_id: str) -> Cursor[Mapping[str, Any] | Any]:
 #     )
 #
 #
-# def keyboard_meetings():
-#     builder = InlineKeyboardBuilder()
-#
-#     builder.button(text='Создать новую встречу', )
-#     builder.button(text='Посмотреть список актуальных встреч')
-#     builder.adjust(2, 2)
-#
-#     return builder.as_markup(resize_keyboard=True, input_field_placeholder="test")
-#
+
 
 dp = Dispatcher()
 
 
 @dp.message(CommandStart())
 async def send_welcome(message: types.Message) -> None:
-    await message.reply("Привет! Я помогу вам выбрать лучшее время для встречи!")
+    await message.reply("Привет! Я помогу вам выбрать лучшее время для встречи!\n"
+                        "Команда /help поможет узнать доступные команды")
+
+
+@dp.message(Command('help'))
+async def send_welcome(message: types.Message) -> None:
+    await message.reply("Команды:\n"
+                        "/start Начало работы бота\n"
+                        "/help Узнать справочную информацию\n"
+                        "/meetings Посмотреть список встреч или создать новую")
 
 
 @meetings_router.message(Command('meetings'))
@@ -124,7 +136,6 @@ async def meetings_menu(message: Message, state: FSMContext) -> None:
 
 @meetings_router.message(Meeting.new, F.text.casefold() == "посмотреть список")
 async def process_get_list_of_meetings(message: Message, state: FSMContext) -> None:
-    await state.clear()
     chat_id = str(state.key.chat_id)
     await show_actual_meetings(message=message, actual_meetings=events, chat_id=chat_id)
 
@@ -134,7 +145,18 @@ async def show_actual_meetings(message: Message, actual_meetings: List, chat_id:
     # Convert to a list of JSON-compatible dictionaries
     events_list = [json.loads(json.dumps(event, default=str)) for event in db_events]
     if len(events_list) == 0:
-        await message.answer(text="Извините, нет актуальных встреч", reply_markup=ReplyKeyboardRemove())
+        await message.answer(
+            f"Извините, намеченный встреч нет. Хотите создать новую?",
+            reply_markup=ReplyKeyboardMarkup(
+                keyboard=[
+                    [
+                        KeyboardButton(text="создать новую встречу"),
+                        KeyboardButton(text="нет"),
+                    ]
+                ],
+                resize_keyboard=True,
+            ),
+        )
         return
 
     # db_events = get_events_by_chat_id(chat_id)
@@ -142,8 +164,20 @@ async def show_actual_meetings(message: Message, actual_meetings: List, chat_id:
 
     text = 'Предстоящие встречи:'
     for event in events_list:
-        text += f'\n "{event['title']}": {event['start']}-{event['end']}'
+        text += f'\n "{event['title']}": {event['week_start']}-{event['week_end']}'
     await message.answer(text=text, reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        f"Хотите создать новую встречу?",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [
+                    KeyboardButton(text="создать новую встречу"),
+                    KeyboardButton(text="нет"),
+                ]
+            ],
+            resize_keyboard=True,
+        ),
+    )
     return
 
 
@@ -155,6 +189,13 @@ async def process_create_new_meeting(message: Message, state: FSMContext) -> Non
         reply_markup=ReplyKeyboardRemove(),
     )
 
+@meetings_router.message(Meeting.new, F.text.casefold() == "нет")
+async def process_decline_creating_meeting(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "Хорошо!",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
 @meetings_router.message(Meeting.title)
 async def process_meeting_title(message: Message, state: FSMContext) -> None:
@@ -181,16 +222,18 @@ async def process_meeting_weekday(message: Message, state: FSMContext) -> None:
 
     new_event = Event(
         title=current_data.get('title'),
-        start=start_and_finish['Monday'],
-        end=start_and_finish['Sunday'],
+        week_start=start_and_finish['Monday'],
+        week_end=start_and_finish['Sunday'],
         author_id=author_id,
         chat_id=chat_id,
+        status=EventStatus.CREATED,
+        day='',
     )
 
     events.append(new_event)
     insert_event(new_event)
     await message.answer(
-        f'Отлично, встреча произойдет на неделе {new_event.start}-{new_event.end}! Осталось выбрать лучшее время!',
+        f'Отлично, встреча произойдет на неделе {new_event.week_start}-{new_event.week_end}! Осталось выбрать лучшее время!',
         reply_markup=ReplyKeyboardRemove(),
     )
     await state.clear()
