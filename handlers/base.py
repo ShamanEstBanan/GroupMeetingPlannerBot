@@ -16,8 +16,13 @@ async def send_welcome(message: Message) -> None:
 
 @router.message(Command('help'))
 async def send_welcome(message: Message) -> None:
-    await message.reply("Команды:\n"
+    await message.reply("Бот который поможет спланировать день и время для нескольких людей\n\n"
+                        "Команды:\n"
                         "/start Начало работы бота\n"
-                        "/help Узнать справочную информацию\n"
-                        "/meetings Посмотреть список встреч или создать новую")
+                        "/help Узнать справочную информацию по командам\n"
+                        "/future_meetings Посмотреть список будущих встреч\n"
+                        "/new_meeting Создать новую встречу\n"
+                        "/join_meeting Присоедениться к будущей встрече\n"
+                        "/cancel Сбрасывает текущую операцию\n"
+                        )
 

@@ -1,20 +1,32 @@
 from dataclasses import dataclass
-from enum import Enum
+from datetime import datetime
 
-class EventStatus(Enum):
-    CREATED = 'CREATED'
-    SCHEDULED = "scheduled"
-    COMPLETED = "completed"
-    CANCELED = "canceled"
 
+@dataclass()
+class TimePeriod:
+    user_name: str
+    user_id: str
+    event_id: str
+    chat_id: str
+    day: datetime
+    start_time: datetime
+    end_time: datetime
 
 
 @dataclass
 class Event:
-    chat_id: str
-    title: str
-    week_start: str
-    week_end: str
-    author_id: str
+    """
+    title: title of the event
+    author_id: author of the event
+    chat_id: chat_id where the event is located
+    period_start: first day of days range for choosing the best day
+    period_end:  last day of days range for choosing the best day
+    chosen_day:  final day of event
     status: EventStatus
-    day:str
+    """
+    title: str
+    author_id: str
+    chat_id: str
+    period_start: datetime
+    period_end: datetime
+    chosen_day: datetime
